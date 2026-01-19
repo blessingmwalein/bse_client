@@ -10,11 +10,13 @@ using BseMarketDataClient.Networking;
 namespace BseMarketDataClient.Session
 {
     public class SnapshotSession
+        // Event to notify when a market data snapshot is received
+        public event Action<FixMessage>? OnMarketDataSnapshot;
     {
         private readonly string _ip;
         private readonly int _port;
-        private readonly string _username;
-        private readonly string _password;
+        private readonly string? _username;
+        private readonly string? _password;
         
         private readonly TcpSession _tcp;
         private readonly FastFrameDecoder _decoder = new();
@@ -23,13 +25,12 @@ namespace BseMarketDataClient.Session
         private DateTime _lastSentTime = DateTime.MinValue;
         private readonly int _heartBtInt = 30;
 
-        public SnapshotSession(string ip, int port, string username, string password)
+        public SnapshotSession(string ip, int port, string? username = null, string? password = null)
         {
             _ip = ip;
             _port = port;
             _username = username;
             _password = password;
-            
             _tcp = new TcpSession(_ip, _port);
             _tcp.DataReceived += OnDataReceived;
             _tcp.Disconnected += OnDisconnected;
@@ -40,35 +41,46 @@ namespace BseMarketDataClient.Session
             try
             {
                 await _tcp.ConnectAsync(ct);
-                
-                // 1. Send Logon immediately
                 await SendLogonAsync(ct);
-                
-                // 2. Start background loops
                 var hbLoop = SendHeartbeatLoopAsync(ct);
-                
-                // 3. Wait for liveness (Heartbeats, etc.)
+
+                // Heartbeat/TestRequest/Timeout logic
+                bool testRequestSent = false;
+                DateTime? testRequestTime = null;
+
                 while (!ct.IsCancellationRequested)
                 {
                     await Task.Delay(1000, ct);
-                    
+
                     if (_isLoggedIn)
                     {
                         var idleTime = (DateTime.Now - _lastReceivedTime).TotalSeconds;
-                        if (idleTime > _heartBtInt + 5)
+
+                        // If no heartbeat for > 60s, send TestRequest
+                        if (!testRequestSent && idleTime > 60)
                         {
-                            ConsoleLogger.Warning($"Session idle for {idleTime:F1}s. Sending TestRequest...");
+                            ConsoleLogger.Warning($"No Heartbeat for {idleTime:F1}s. Sending TestRequest...");
                             await SendTestRequestAsync(ct);
+                            testRequestSent = true;
+                            testRequestTime = DateTime.Now;
                         }
-                        
-                        if (idleTime > (_heartBtInt * 2))
+
+                        // If no response for > 90s, disconnect and reconnect
+                        if (testRequestSent && testRequestTime.HasValue && (DateTime.Now - testRequestTime.Value).TotalSeconds > 30)
                         {
-                            ConsoleLogger.Error("Session timeout - no data received. Reconnecting...");
-                            break; 
+                            ConsoleLogger.Error("No response to TestRequest. Disconnecting and reconnecting...");
+                            break;
+                        }
+
+                        // Reset if heartbeat received
+                        if (!testRequestSent && idleTime <= 60)
+                        {
+                            testRequestSent = false;
+                            testRequestTime = null;
                         }
                     }
                 }
-                
+
                 await hbLoop;
             }
             catch (OperationCanceledException)
@@ -87,11 +99,14 @@ namespace BseMarketDataClient.Session
             msg.Set(35, "A"); // Logon
             msg.Set(52, DateTime.UtcNow.ToString("yyyyMMdd-HH:mm:ss.fff"));
             msg.Set(108, 30); // HeartBtInt
-            msg.Set(553, _username);
-            msg.Set(554, _password);
+            if (!string.IsNullOrEmpty(_username))
+                msg.Set(553, _username);
+            if (!string.IsNullOrEmpty(_password))
+                msg.Set(554, _password);
 
             await SendFixMessageAsync(msg, ct);
-            ConsoleLogger.Info("Logon sent.");
+            ConsoleLogger.Info("Logon sent. " +
+                (string.IsNullOrEmpty(_username) ? "(No credentials sent)" : "(Credentials sent)"));
         }
 
         private async Task SendLogoutAsync(CancellationToken ct)
@@ -109,7 +124,6 @@ namespace BseMarketDataClient.Session
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(1000, ct);
-                
                 if (_isLoggedIn && (DateTime.Now - _lastSentTime).TotalSeconds >= _heartBtInt)
                 {
                     await SendHeartbeatAsync(null, ct);
@@ -198,6 +212,8 @@ namespace BseMarketDataClient.Session
         private void HandleMarketDataSnapshot(FixMessage msg)
         {
             var symbol = msg.Get(55);
+            // Raise event for application
+            OnMarketDataSnapshot?.Invoke(msg);
             var lastPrice = msg.Get(270);
             ConsoleLogger.Success($"[SNAPSHOT] Symbol: {symbol}, LastPrice: {lastPrice}");
             // In a real app, you'd parse MDEntries (tag 268) and notify the UI

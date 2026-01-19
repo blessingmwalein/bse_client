@@ -11,6 +11,8 @@ using BseMarketDataClient.Logging;
 namespace BseMarketDataClient.Networking
 {
     public class UdpMulticastSession : IDisposable
+        // Event to notify when a decoded market data payload is received
+        public event Action<byte[]>? OnMarketData;
     {
         private readonly string _multicastIp;
         private readonly int _port;
@@ -58,9 +60,9 @@ namespace BseMarketDataClient.Networking
         {
             foreach (var payload in _decoder.Feed(data, data.Length))
             {
+                OnMarketData?.Invoke(payload);
                 var rawFix = Encoding.ASCII.GetString(payload);
                 // ConsoleLogger.FixIn(rawFix); // Can be very noisy for multicast
-                
                 var msg = FixParser.Parse(rawFix);
                 HandleIncrementalUpdate(msg);
             }

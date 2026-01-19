@@ -25,11 +25,11 @@ namespace BseMarketDataClient
             {
                 string ip = config.GetValueOrDefault("ip", "192.168.90.18");
                 int port = int.Parse(config.GetValueOrDefault("port", "30540"));
-                string username = config.GetValueOrDefault("user", "YOUR_USERNAME");
-                string password = config.GetValueOrDefault("pass", "YOUR_PASSWORD");
-                
+                string username = config.GetValueOrDefault("user", "");
+                string password = config.GetValueOrDefault("pass", "");
+
                 string? mIp = config.GetValueOrDefault("m-ip");
-                int mPort = int.Parse(config.GetValueOrDefault("m-port", "0"));
+                int mPort = int.TryParse(config.GetValueOrDefault("m-port"), out var mp) ? mp : 0;
 
                 using var cts = new System.Threading.CancellationTokenSource();
                 Console.CancelKeyPress += (s, e) =>
@@ -41,9 +41,15 @@ namespace BseMarketDataClient
 
                 var tasks = new List<Task>();
 
-                // 1. TCP Snapshot Session
-                var snapshotSession = new SnapshotSession(ip, port, username, password);
+                // 1. TCP Snapshot Session (FIX Logon optional)
+                var snapshotSession = new SnapshotSession(ip, port,
+                    string.IsNullOrEmpty(username) ? null : username,
+                    string.IsNullOrEmpty(password) ? null : password);
                 tasks.Add(snapshotSession.StartAsync(cts.Token));
+                if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+                {
+                    ConsoleLogger.Warning("FIX credentials not provided. Attempting TCP Snapshot session without authentication.");
+                }
 
                 // 2. UDP Multicast Session (Incremental)
                 if (!string.IsNullOrEmpty(mIp) && mPort > 0)
@@ -54,6 +60,12 @@ namespace BseMarketDataClient
                 else
                 {
                     ConsoleLogger.Warning("UDP Multicast parameters missing. Incremental feed disabled.");
+                }
+
+                if (tasks.Count == 0)
+                {
+                    ConsoleLogger.Error("No valid session parameters provided. Exiting.");
+                    return;
                 }
 
                 await Task.WhenAll(tasks);
