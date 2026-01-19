@@ -12,3 +12,4 @@ C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net10.0\r
 C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net10.0\BseFastClient.pdb
 C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net10.0\BseFastClient.genruntimeconfig.cache
 C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net10.0\ref\BseFastClient.dll
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net10.0\BseFastClient.sourcelink.json

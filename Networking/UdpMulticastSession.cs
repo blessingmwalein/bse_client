@@ -11,9 +11,9 @@ using BseMarketDataClient.Logging;
 namespace BseMarketDataClient.Networking
 {
     public class UdpMulticastSession : IDisposable
+    {
         // Event to notify when a decoded market data payload is received
         public event Action<byte[]>? OnMarketData;
-    {
         private readonly string _multicastIp;
         private readonly int _port;
         private UdpClient? _udpClient;

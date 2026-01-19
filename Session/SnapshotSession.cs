@@ -10,9 +10,9 @@ using BseMarketDataClient.Networking;
 namespace BseMarketDataClient.Session
 {
     public class SnapshotSession
+    {
         // Event to notify when a market data snapshot is received
         public event Action<FixMessage>? OnMarketDataSnapshot;
-    {
         private readonly string _ip;
         private readonly int _port;
         private readonly string? _username;
