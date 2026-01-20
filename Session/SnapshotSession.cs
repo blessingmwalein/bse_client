@@ -73,8 +73,11 @@ namespace BseMarketDataClient.Session
         {
             try
             {
+                ConsoleLogger.Info("Starting Snapshot Session...");
                 await _tcp.ConnectAsync(ct);
+                ConsoleLogger.Info("TCP connection established. Sending Logon...");
                 await SendLogonAsync(ct);
+                ConsoleLogger.Info("Waiting for Logon response...");
                 var hbLoop = SendHeartbeatLoopAsync(ct);
 
                 // Heartbeat/TestRequest/Timeout logic
@@ -203,6 +206,8 @@ namespace BseMarketDataClient.Session
 
         private void OnDataReceived(byte[] data, int length)
         {
+            ConsoleLogger.Info($"Received {length} bytes from server");
+            
             foreach (var payload in _decoder.Feed(data, length))
             {
                 var rawFix = Encoding.ASCII.GetString(payload);
@@ -255,14 +260,22 @@ namespace BseMarketDataClient.Session
         private void HandleLogonResponse(FixMessage msg)
         {
             var status = msg.Get(1409);
+            ConsoleLogger.Info($"Processing Logon response. SessionStatus field (1409): {status ?? "not present"}");
+            
             if (status == "0")
             {
                 _isLoggedIn = true;
                 ConsoleLogger.Success("Logon successful! Session is active.");
             }
-            else
+            else if (status != null)
             {
                 ConsoleLogger.Error($"Logon failed. SessionStatus: {status}");
+            }
+            else
+            {
+                // SessionStatus not present - might still be successful
+                _isLoggedIn = true;
+                ConsoleLogger.Warning("Logon response received without SessionStatus field. Assuming success.");
             }
         }
 
