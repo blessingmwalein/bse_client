@@ -17,7 +17,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-PROJECT_DIR="$HOME/BseFastClient"
+PROJECT_DIR="$HOME/bse_client"
 LOG_DIR="$PROJECT_DIR/market_data_logs"
 
 # Function to print colored messages
