@@ -21,6 +21,7 @@ namespace BseMarketDataClient.Session
         private readonly TcpSession _tcp;
         private readonly FastFrameDecoder _decoder = new();
         private bool _isLoggedIn = false;
+        private bool _hasRequestedData = false;
         private DateTime _lastReceivedTime = DateTime.MinValue;
         private DateTime _lastSentTime = DateTime.MinValue;
         private readonly int _heartBtInt = 30;
@@ -34,6 +35,39 @@ namespace BseMarketDataClient.Session
             _tcp = new TcpSession(_ip, _port);
             _tcp.DataReceived += OnDataReceived;
             _tcp.Disconnected += OnDisconnected;
+        }
+
+        /// <summary>
+        /// Request all security definitions (instrument list).
+        /// </summary>
+        public async Task RequestSecurityDefinitionsAsync(CancellationToken ct)
+        {
+            var msg = new FixMessage();
+            msg.Set(35, "c"); // Security Definition Request
+            msg.Set(320, Guid.NewGuid().ToString()); // SecurityReqID
+            msg.Set(321, "8"); // SecurityRequestType = All Securities
+            msg.Set(263, "0"); // SubscriptionRequestType = Snapshot
+            
+            await SendFixMessageAsync(msg, ct);
+            ConsoleLogger.Info("Requested Security Definitions (instrument list)");
+        }
+
+        /// <summary>
+        /// Request market data snapshot for all instruments.
+        /// </summary>
+        public async Task RequestMarketDataSnapshotAsync(CancellationToken ct)
+        {
+            var msg = new FixMessage();
+            msg.Set(35, "V"); // Market Data Request
+            msg.Set(262, Guid.NewGuid().ToString()); // MDReqID
+            msg.Set(263, "0"); // SubscriptionRequestType = Snapshot
+            msg.Set(264, "0"); // MarketDepth = Full Book
+            msg.Set(267, "2"); // NoMDEntryTypes = 2
+            msg.Set(269, "0"); // MDEntryType = Bid
+            msg.Set(269, "1"); // MDEntryType = Offer
+            
+            await SendFixMessageAsync(msg, ct);
+            ConsoleLogger.Info("Requested Market Data Snapshot (order book)");
         }
 
         /// <summary>
@@ -90,6 +124,20 @@ namespace BseMarketDataClient.Session
 
                     if (_isLoggedIn)
                     {
+                        // Request market data once after successful login
+                        if (!_hasRequestedData)
+                        {
+                            _hasRequestedData = true;
+                            ConsoleLogger.Info("Logon successful! Requesting market data...");
+                            
+                            // Request Security Definitions (instrument list)
+                            await RequestSecurityDefinitionsAsync(ct);
+                            
+                            // Wait a bit, then request market data snapshot
+                            await Task.Delay(2000, ct);
+                            await RequestMarketDataSnapshotAsync(ct);
+                        }
+                        
                         var idleTime = (DateTime.Now - _lastReceivedTime).TotalSeconds;
 
                         // If no heartbeat for > 60s, send TestRequest
