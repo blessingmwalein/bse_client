@@ -1,0 +1,15 @@
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\BseFastClient.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\BseFastClient.AssemblyInfoInputs.cache
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\BseFastClient.AssemblyInfo.cs
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\BseFastClient.csproj.CoreCompileInputs.cache
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\BseFastClient.sourcelink.json
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\bin\Debug\net6.0\BseFastClient.exe
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\bin\Debug\net6.0\BseFastClient.deps.json
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\bin\Debug\net6.0\BseFastClient.runtimeconfig.json
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\bin\Debug\net6.0\BseFastClient.dll
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\bin\Debug\net6.0\BseFastClient.pdb
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\BseFastClient.dll
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\refint\BseFastClient.dll
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\BseFastClient.pdb
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\BseFastClient.genruntimeconfig.cache
+C:\Users\Blessing Mwale\Documents\Projects\BSE\BseFastClient\obj\Debug\net6.0\ref\BseFastClient.dll

@@ -36,6 +36,39 @@ namespace BseMarketDataClient.Session
             _tcp.Disconnected += OnDisconnected;
         }
 
+        /// <summary>
+        /// Request a market data snapshot for a specific symbol (instrument-level recovery).
+        /// </summary>
+        public async Task RequestInstrumentSnapshotAsync(string symbol, CancellationToken ct)
+        {
+            var msg = new FixMessage();
+            msg.Set(35, "V"); // Market Data Request
+            msg.Set(262, Guid.NewGuid().ToString()); // MDReqID
+            msg.Set(263, "1"); // Snapshot
+            msg.Set(264, "0"); // No updates
+            msg.Set(146, "1"); // NoRelatedSym
+            msg.Set(55, symbol); // Symbol
+            // Add other required tags as per BSE spec
+            await SendFixMessageAsync(msg, ct);
+            ConsoleLogger.Info($"Requested snapshot for symbol: {symbol}");
+        }
+
+        /// <summary>
+        /// Request a full book snapshot (channel-level recovery).
+        /// </summary>
+        public async Task RequestFullBookSnapshotAsync(CancellationToken ct)
+        {
+            var msg = new FixMessage();
+            msg.Set(35, "V"); // Market Data Request
+            msg.Set(262, Guid.NewGuid().ToString()); // MDReqID
+            msg.Set(263, "1"); // Snapshot
+            msg.Set(264, "0"); // No updates
+            // Add other required tags as per BSE spec for full book
+            await SendFixMessageAsync(msg, ct);
+            ConsoleLogger.Info("Requested full book snapshot");
+        }
+
+
         public async Task StartAsync(CancellationToken ct)
         {
             try
