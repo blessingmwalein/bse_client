@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BseFastClient")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+88f1aeda077b4da6b017d415d4336b291bb7bbf6")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2310d30fbf8554f5d63162d1ee2dc15df93bb0f8")]
 [assembly: System.Reflection.AssemblyProductAttribute("BseFastClient")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BseFastClient")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

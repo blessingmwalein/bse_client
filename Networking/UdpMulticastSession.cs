@@ -15,16 +15,11 @@ namespace BseMarketDataClient.Networking
     {
         // Event to notify when a decoded market data payload is received
         public event Action<byte[]>? OnMarketData;
-        // Event to request recovery (e.g., snapshot/replay) on sequence gap
-        public event Action<string?, long, long>? OnRecoveryRequested;
         private readonly string _multicastIp;
         private readonly int _port;
         private UdpClient? _udpClient;
         private readonly FastFrameDecoder _decoder = new();
         private bool _disposed;
-        // Sequence tracking
-        private long _lastApplSeqNum = 0;
-        private readonly Dictionary<string, long> _lastRptSeq = new();
         // File logging for raw data capture
         private StreamWriter? _rawDataLog;
         private StreamWriter? _decodedDataLog;
@@ -55,11 +50,20 @@ namespace BseMarketDataClient.Networking
         {
             try
             {
-                _udpClient = new UdpClient(_port, AddressFamily.InterNetwork);
+                // Create UDP client with proper multicast configuration
+                _udpClient = new UdpClient(AddressFamily.InterNetwork);
+                
+                // Enable address reuse (critical for multicast)
+                _udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                
+                // Bind to the multicast port on all interfaces
+                _udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, _port));
+                
+                // Join the multicast group
                 var multicastAddress = IPAddress.Parse(_multicastIp);
                 _udpClient.JoinMulticastGroup(multicastAddress);
 
-                ConsoleLogger.Success($"Joined multicast group {_multicastIp}:{_port}");
+                ConsoleLogger.Success($"Joined multicast group {_multicastIp}:{_port} (bound to all interfaces)");
 
                 while (!ct.IsCancellationRequested)
                 {

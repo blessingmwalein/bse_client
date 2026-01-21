@@ -55,20 +55,6 @@ namespace BseMarketDataClient
                 if (!string.IsNullOrEmpty(mIp) && mPort > 0)
                 {
                     var multicastSession = new UdpMulticastSession(mIp, mPort);
-                    // Wire up recovery: on sequence gap, trigger snapshot/replay via SnapshotSession
-                    multicastSession.OnRecoveryRequested += async (symbol, fromSeq, toSeq) =>
-                    {
-                        if (symbol == null)
-                        {
-                            ConsoleLogger.Warning($"[RECOVERY] Channel-level gap detected: Requesting snapshot for ApplSeqNum {fromSeq} to {toSeq}");
-                            await snapshotSession.RequestFullBookSnapshotAsync(cts.Token);
-                        }
-                        else
-                        {
-                            ConsoleLogger.Warning($"[RECOVERY] Instrument-level gap detected for {symbol}: Requesting snapshot for RptSeq {fromSeq} to {toSeq}");
-                            await snapshotSession.RequestInstrumentSnapshotAsync(symbol, cts.Token);
-                        }
-                    };
                     tasks.Add(multicastSession.StartAsync(cts.Token));
                 }
                 else
