@@ -23,10 +23,11 @@ namespace BseMarketDataClient
 
             try
             {
+                // BSE Snapshot Channel - Hardcoded for testing
                 string ip = config.GetValueOrDefault("ip", "192.168.90.18");
-                int port = int.Parse(config.GetValueOrDefault("port", "30540"));
-                string username = config.GetValueOrDefault("user", "");
-                string password = config.GetValueOrDefault("pass", "");
+                int port = int.Parse(config.GetValueOrDefault("port", "540")); // Changed to 540
+                string username = config.GetValueOrDefault("user", "ESC_MOTS"); // BSE CompID
+                string password = config.GetValueOrDefault("pass", "h56@i8X3;"); // BSE Password
 
                 string? mIp = config.GetValueOrDefault("m-ip");
                 int mPort = int.TryParse(config.GetValueOrDefault("m-port"), out var mp) ? mp : 0;
