@@ -52,16 +52,16 @@ namespace BseMarketDataClient
                     ConsoleLogger.Warning("FIX credentials not provided. Attempting TCP Snapshot session without authentication.");
                 }
 
-                // 2. UDP Multicast Session (Incremental)
-                if (!string.IsNullOrEmpty(mIp) && mPort > 0)
-                {
-                    var multicastSession = new UdpMulticastSession(mIp, mPort);
-                    tasks.Add(multicastSession.StartAsync(cts.Token));
-                }
-                else
-                {
-                    ConsoleLogger.Warning("UDP Multicast parameters missing. Incremental feed disabled.");
-                }
+                // // 2. UDP Multicast Session (Incremental)
+                // if (!string.IsNullOrEmpty(mIp) && mPort > 0)
+                // {
+                //     var multicastSession = new UdpMulticastSession(mIp, mPort);
+                //     tasks.Add(multicastSession.StartAsync(cts.Token));
+                // }
+                // else
+                // {
+                //     ConsoleLogger.Warning("UDP Multicast parameters missing. Incremental feed disabled.");
+                // }
 
                 if (tasks.Count == 0)
                 {
