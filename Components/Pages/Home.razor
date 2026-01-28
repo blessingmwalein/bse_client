@@ -1,0 +1,316 @@
+﻿@page "/"
+@using BseDashboard.Models
+@using BseDashboard.Services
+@inject MarketDataService DataService
+@implements IDisposable
+
+<PageTitle>BSE Market Data Dashboard</PageTitle>
+
+<div class="dashboard-container">
+    <header class="dashboard-header">
+        <div class="logo">
+            <span class="pulse"></span>
+            <h1>BSE LIVE MONITOR</h1>
+        </div>
+        <div class="status-indicators">
+            <div class="indicator">
+                <span class="label">Status</span>
+                <span class="value success">CONNECTED</span>
+            </div>
+            <div class="indicator">
+                <span class="label">Feed</span>
+                <span class="value">UDP MULTICAST</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>HEARTBEATS</h3>
+            <div class="value">@HeartbeatCount</div>
+            <div class="trend">Last: @(LastHeartbeat?.ToString("HH:mm:ss") ?? "N/A")</div>
+        </div>
+        <div class="stat-card">
+            <h3>SYMBOLS</h3>
+            <div class="value">@TrackedSymbols.Count</div>
+            <div class="trend">Real-time tracking</div>
+        </div>
+        <div class="stat-card">
+            <h3>LATENCY</h3>
+            <div class="value">~1ms</div>
+            <div class="trend">Fast decoding</div>
+        </div>
+    </div>
+
+    <div class="main-grid">
+        <section class="feed-section">
+            <div class="section-header">
+                <h2>MARKET FEED</h2>
+                <div class="controls">
+                    <span class="live-tag">LIVE</span>
+                </div>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>TIME</th>
+                            <th>SYMBOL</th>
+                            <th>TYPE</th>
+                            <th>PRICE</th>
+                            <th>SIZE</th>
+                            <th>MSG</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var msg in Messages.TakeLast(10).Reverse())
+                        {
+                            <tr class="fade-in">
+                                <td class="time">@msg.SendingTime.ToString("HH:mm:ss.fff")</td>
+                                <td class="symbol">@(string.IsNullOrEmpty(msg.Symbol) ? "-" : msg.Symbol)</td>
+                                <td class="type @msg.EntryType.ToLower()">@msg.EntryType</td>
+                                <td class="price">@msg.Price.ToString("N2")</td>
+                                <td class="size">@msg.Size</td>
+                                <td class="msg">@msg.MsgType</td>
+                            </tr>
+                        }
+                        @if (!Messages.Any())
+                        {
+                            <tr>
+                                <td colspan="6" class="empty">Waiting for market data...</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="packet-monitor">
+            <h2>RAW PACKETS</h2>
+            <div class="log-container">
+                @foreach (var log in RawLogs.TakeLast(20).Reverse())
+                {
+                    <div class="log-entry">
+                        <span class="log-time">[@DateTime.Now.ToString("HH:mm:ss")]</span>
+                        <span class="log-data">@log</span>
+                    </div>
+                }
+            </div>
+        </section>
+    </div>
+</div>
+
+<style>
+    :root {
+        --bg-color: #0d0e12;
+        --card-bg: rgba(255, 255, 255, 0.05);
+        --text-primary: #ffffff;
+        --text-secondary: #a0aec0;
+        --accent-color: #00f2fe;
+        --success-color: #48bb78;
+        --danger-color: #f56565;
+        --border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .dashboard-container {
+        padding: 2rem;
+        background: var(--bg-color);
+        min-height: 100vh;
+        color: var(--text-primary);
+        font-family: 'Inter', sans-serif;
+    }
+
+    .dashboard-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 1rem;
+    }
+
+    .logo {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .logo h1 {
+        margin: 0;
+        font-size: 1.5rem;
+        font-weight: 800;
+        letter-spacing: 2px;
+        background: linear-gradient(to right, #00f2fe, #4facfe);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .pulse {
+        width: 12px;
+        height: 12px;
+        background: var(--success-color);
+        border-radius: 50%;
+        box-shadow: 0 0 0 0 rgba(72, 187, 120, 0.7);
+        animation: pulse 2s infinite;
+    }
+
+    @@keyframes pulse {
+        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(72, 187, 120, 0.7); }
+        70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(72, 187, 120, 0); }
+        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(72, 187, 120, 0); }
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .stat-card {
+        background: var(--card-bg);
+        padding: 1.5rem;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        backdrop-filter: blur(10px);
+    }
+
+    .stat-card h3 {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        margin: 0 0 0.5rem 0;
+    }
+
+    .stat-card .value {
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+
+    .stat-card .trend {
+        font-size: 0.8rem;
+        color: var(--accent-color);
+    }
+
+    .main-grid {
+        display: grid;
+        grid-template-columns: 2.5fr 1fr;
+        gap: 1.5rem;
+    }
+
+    .feed-section, .packet-monitor {
+        background: var(--card-bg);
+        border-radius: 12px;
+        padding: 1.5rem;
+        border: 1px solid var(--border-color);
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+
+    .live-tag {
+        background: var(--danger-color);
+        color: white;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-weight: bold;
+        animation: blink 1s infinite;
+    }
+
+    @@keyframes blink {
+        50% { opacity: 0.5; }
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    th {
+        text-align: left;
+        padding: 12px;
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    td {
+        padding: 12px;
+        font-size: 0.9rem;
+    }
+
+    .fade-in {
+        animation: fadeIn 0.5s ease-out;
+    }
+
+    @@keyframes fadeIn {
+        from { opacity: 0; transform: translateY(5px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .log-container {
+        height: 400px;
+        overflow-y: auto;
+        font-family: 'Fira Code', monospace;
+        font-size: 0.75rem;
+        background: rgba(0,0,0,0.3);
+        padding: 1rem;
+        border-radius: 8px;
+    }
+
+    .log-entry {
+        margin-bottom: 0.5rem;
+        color: #48bb78;
+    }
+
+    .log-time { color: #a0aec0; }
+    .log-data { color: #00f2fe; margin-left: 0.5rem; }
+</style>
+
+@code {
+    private List<MarketDataEntry> Messages = new();
+    private List<string> RawLogs = new();
+    private HashSet<string> TrackedSymbols = new();
+    private int HeartbeatCount = 0;
+    private DateTime? LastHeartbeat;
+
+    protected override void OnInitialized()
+    {
+        DataService.OnNewMessage += HandleNewMessage;
+    }
+
+    private void HandleNewMessage(MarketDataEntry entry)
+    {
+        InvokeAsync(() =>
+        {
+            Messages.Add(entry);
+            RawLogs.Add(entry.RawHex);
+            
+            if (entry.MsgType == "Heartbeat")
+            {
+                HeartbeatCount++;
+                LastHeartbeat = DateTime.Now;
+            }
+            
+            if (!string.IsNullOrEmpty(entry.Symbol))
+            {
+                TrackedSymbols.Add(entry.Symbol);
+            }
+
+            if (Messages.Count > 100) Messages.RemoveAt(0);
+            if (RawLogs.Count > 100) RawLogs.RemoveAt(0);
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        DataService.OnNewMessage -= HandleNewMessage;
+    }
+}
