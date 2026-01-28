@@ -27,38 +27,43 @@ namespace BseDashboard.Decoder
             hb.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.None));
             _templates[64] = hb;
 
-            // Incremental Refresh (Template 193)
-            var ir = new FastTemplate(193, "Incremental");
-            ir.Fields.Add(new FastField(34, "SeqNum", FieldType.UInt32, FieldOperator.None));
-            ir.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.Tail));
-            ir.Fields.Add(new FastField(55, "Symbol", FieldType.ASCII, FieldOperator.Copy));
-            ir.Fields.Add(new FastField(269, "EntryType", FieldType.ASCII, FieldOperator.Copy));
-            ir.Fields.Add(new FastField(270, "Price", FieldType.Decimal, FieldOperator.Delta));
-            ir.Fields.Add(new FastField(271, "Size", FieldType.UInt32, FieldOperator.Delta));
-            _templates[193] = ir;
+            // Map large Observed IDs from BSE Feed
+            // 16320 and 16352 are common in this feed for MarketData/SecDef
+            _templates[16320] = CreateMarketDataTemplate(16320, "IncrementalRefresh");
+            _templates[16352] = CreateMarketDataTemplate(16352, "SecurityDefinition");
+        }
+
+        private static FastTemplate CreateMarketDataTemplate(int id, string name)
+        {
+            var t = new FastTemplate(id, name);
+            t.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.Tail));
+            t.Fields.Add(new FastField(55, "Symbol", FieldType.ASCII, FieldOperator.Copy));
+            t.Fields.Add(new FastField(269, "EntryType", FieldType.ASCII, FieldOperator.Copy));
+            t.Fields.Add(new FastField(270, "Price", FieldType.Decimal, FieldOperator.Delta));
+            t.Fields.Add(new FastField(271, "Size", FieldType.UInt32, FieldOperator.Delta));
+            return t;
         }
 
         public static MarketDataEntry Decode(byte[] data)
         {
-            var entry = new MarketDataEntry { RawHex = BitConverter.ToString(data) };
+            var entry = new MarketDataEntry { 
+                RawHex = BitConverter.ToString(data),
+                SendingTime = DateTime.Now // Default to now
+            };
             int offset = 0;
 
             try
             {
                 // 1. Read Presence Map (PMap)
-                // PMaps can be multiple bytes. High bit (0x80) is the extension bit.
-                // We collect all bits into a single bit-array.
                 List<bool> pMapBits = new();
                 while (offset < data.Length)
                 {
                     byte b = data[offset++];
-                    for (int i = 6; i >= 0; i--) {
-                        pMapBits.Add((b & (1 << i)) != 0);
-                    }
+                    for (int i = 6; i >= 0; i--) pMapBits.Add((b & (1 << i)) != 0);
                     if ((b & 0x80) != 0) break;
                 }
 
-                // 2. Read Template ID
+                // 2. Read Template ID (Can be multi-byte)
                 int templateId = (int)ReadInteger(data, ref offset);
                 entry.TemplateId = templateId;
 
@@ -69,7 +74,7 @@ namespace BseDashboard.Decoder
 
                     foreach (var field in template.Fields)
                     {
-                        bool usesPMap = field.Operator != FieldOperator.None;
+                        bool usesPMap = field.Operator != FieldOperator.None && field.Operator != FieldOperator.Constant;
                         bool isPresent = !usesPMap || (bitIndex < pMapBits.Count && pMapBits[bitIndex++]);
 
                         object value = null;
@@ -91,38 +96,43 @@ namespace BseDashboard.Decoder
                                 }
                                 break;
                             case FieldOperator.Delta:
-                                // Delta uses numeric enrichment, for now we read as None
                                 value = ReadInteger(data, ref offset);
                                 break;
                         }
-
                         ApplyFieldToEntry(entry, field, value);
                     }
                 }
-                else
-                {
-                    entry.MsgType = "Discovering...";
-                    DiscoverFields(data, offset, entry);
-                }
+                
+                // Always try to discover fields to fill gaps or if template failed
+                DiscoverFields(data, entry);
             }
-            catch { DiscoverFields(data, 0, entry); }
+            catch { DiscoverFields(data, entry); }
 
             return entry;
         }
 
-        private static void DiscoverFields(byte[] data, int offset, MarketDataEntry entry)
+        private static void DiscoverFields(byte[] data, MarketDataEntry entry)
         {
             try {
-                // Heuristic Fallback
                 string content = Encoding.ASCII.GetString(data);
-                var match = Regex.Match(content, @"[A-Z0-9]{3,8}-[A-Z]{2}");
-                if (match.Success) entry.Symbol = match.Value;
-                if (content.Contains("FNBB-EQ")) entry.Symbol = "FNBB-EQ";
                 
-                // Try to find the MsgType '0' or 'X' or 'd'
+                // Scrape Symbol
+                var symMatch = Regex.Match(content, @"[A-Z0-9]{3,8}-[A-Z]{2}");
+                if (symMatch.Success && (entry.Symbol == "-" || entry.Symbol == null)) {
+                    entry.Symbol = symMatch.Value;
+                }
+
+                // Scrape Time (YYYYMMDD-HH:MM:SS)
+                var timeMatch = Regex.Match(content, @"\d{8}-\d{2}:\d{2}:\d{2}");
+                if (timeMatch.Success) {
+                    entry.SendingTime = ParseBseTime(timeMatch.Value);
+                }
+
+                // Scrape MsgTypeCode (Look for markers like -0, -X, -d)
                 if (content.Contains("-0")) entry.MsgTypeCode = "0";
                 else if (content.Contains("-X")) entry.MsgTypeCode = "X";
                 else if (content.Contains("-d")) entry.MsgTypeCode = "d";
+                else if (entry.TemplateId == 64) entry.MsgTypeCode = "0";
             } catch {}
         }
 
@@ -175,10 +185,10 @@ namespace BseDashboard.Decoder
         private static DateTime ParseBseTime(string s)
         {
             try {
-                // Handle various BSE time formats
-                var match = Regex.Match(s, @"\d{8}-\d{2}:\d{2}:\d{2}");
-                if (match.Success) {
-                    return DateTime.ParseExact(match.Value, "yyyyMMdd-HH:mm:ss", null);
+                if (string.IsNullOrEmpty(s)) return DateTime.Now;
+                // Handle 20260128-12:23:10.60874 (Length 24)
+                if (s.Length >= 17) {
+                    return DateTime.ParseExact(s.Substring(0, 17), "yyyyMMdd-HH:mm:ss", null);
                 }
                 return DateTime.Now;
             } catch { return DateTime.Now; }
