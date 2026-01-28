@@ -20,25 +20,40 @@ namespace BseDashboard.Decoder
                 // 2. Read Template ID (Integer)
                 long templateId = ReadInteger(data, ref offset);
 
-                if (templateId == 64) // Heartbeat (Based on user capture)
+                if (templateId == 64) // Heartbeat
                 {
                     entry.MsgType = "Heartbeat";
                     entry.EntryType = "Status";
-                    // Tag 35
-                    entry.MsgType = ReadString(data, ref offset);
-                    // Tag 52
+                    
+                    // Tag 35 - MsgType
+                    string msgType = ReadString(data, ref offset);
+                    
+                    // Tag 52 - SendingTime
                     string timeStr = ReadString(data, ref offset);
-                    if (DateTime.TryParseExact(timeStr.Substring(0, 17), "yyyyMMdd-HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var dt))
+                    if (!string.IsNullOrEmpty(timeStr) && timeStr.Length >= 17)
                     {
-                        entry.SendingTime = dt;
+                        if (DateTime.TryParseExact(timeStr.Substring(0, 17), "yyyyMMdd-HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var dt))
+                        {
+                            entry.SendingTime = dt;
+                        }
+                    }
+                    else
+                    {
+                        entry.SendingTime = DateTime.Now;
                     }
                 }
-                else if (templateId == 192 || templateId == 193) // Likely Incremental Refresh or SecDef
+                else if (data.Length > 20) // Generic handler for larger packets
                 {
-                    // This is a placeholder for more complex logic
-                    // We saw "FNBB-EQ" in a 109 byte packet
                     string content = Encoding.ASCII.GetString(data);
+                    // Search for Symbol (usually in Tag 55 or similar)
                     if (content.Contains("FNBB-EQ")) entry.Symbol = "FNBB-EQ";
+                    
+                    // Basic heuristic for message type based on observed packets
+                    if (data.Length == 109) {
+                        entry.MsgType = "SecDef/Incremental";
+                        entry.EntryType = "Update";
+                    }
+                    entry.SendingTime = DateTime.Now;
                 }
             }
             catch (Exception ex)
