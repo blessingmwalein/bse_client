@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xmlns="http://www.fixprotocol.org/ns/fast/td/1.1">
+  
+  <!-- Section 6.2.2.1 Administrative Messages -->
+  <template name="Heartbeat" id="64">
+    <string name="MsgType" id="35">
+      <none/>
+    </string>
+    <string name="SendingTime" id="52">
+      <none/>
+    </string>
+  </template>
+
+  <!-- Section 6.4.2 Market Data Request (Example of non-field encoded) -->
+  <template name="MarketDataRequest" id="V">
+    <string name="MDReqID" id="262"><none/></string>
+    <uInt32 name="SubscriptionRequestType" id="263"><none/></uInt32>
+    <uInt32 name="NoMDEntryTypes" id="267"><none/></uInt32>
+    <string name="MDEntryType" id="269"><copy/></string>
+    <string name="MDEntryTime" id="273"><none/></string>
+  </template>
+
+  <!-- Market Data Incremental Refresh (Guessing ID 193 based on industry standard for BSE feeds) -->
+  <template name="MarketDataIncrementalRefresh" id="193">
+    <string name="MsgType" id="35"><constant value="X"/></string>
+    <string name="SendingTime" id="52"><tail/></string>
+    <sequence name="MDEntries">
+      <length name="NoMDEntries" id="268"/>
+      <string name="Symbol" id="55"><copy/></string>
+      <uInt32 name="MDEntryType" id="269"><copy/></uInt32>
+      <decimal name="MDEntryPx" id="270"><delta/></decimal>
+      <uInt32 name="MDEntrySize" id="271"><delta/></uInt32>
+    </sequence>
+  </template>
+
+</templates>

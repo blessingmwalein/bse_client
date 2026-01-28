@@ -42,65 +42,77 @@
         </div>
     </div>
 
-    <div class="main-grid">
-        <section class="feed-section">
-            <div class="section-header">
-                <h2>MARKET FEED</h2>
-                <div class="controls">
-                    <span class="live-tag">LIVE</span>
-                </div>
-            </div>
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>TIME</th>
-                            <th>ID</th>
-                            <th>FIX</th>
-                            <th>SYMBOL</th>
-                            <th>TYPE</th>
-                            <th>PRICE</th>
-                            <th>SIZE</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var msg in DisplayMessages.Reverse())
-                        {
-                            <tr class="fade-in">
-                                <td class="time">@msg.SendingTime.ToString("HH:mm:ss.fff")</td>
-                                <td class="id">@msg.TemplateId</td>
-                                <td class="fix">@msg.MsgTypeCode</td>
-                                <td class="symbol">@msg.Symbol</td>
-                                <td class="type @msg.EntryType.ToLower()">@msg.EntryType</td>
-                                <td class="price">@msg.Price.ToString("N2")</td>
-                                <td class="size">@msg.Size</td>
-                            </tr>
-                        }
-                        @if (DisplayMessages.Length == 0)
-                        {
-                            <tr>
-                                <td colspan="7" class="empty">Waiting for market data...</td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <section class="packet-monitor">
-            <h2>RAW PACKETS</h2>
-            <div class="log-container">
-                @foreach (var log in DisplayLogs.Reverse())
-                {
-                    <div class="log-entry">
-                        <span class="log-time">[@DateTime.Now.ToString("HH:mm:ss")]</span>
-                        <span class="log-data">@log</span>
+    <ErrorBoundary>
+        <ChildContent>
+            <div class="main-grid">
+                <section class="feed-section">
+                    <div class="section-header">
+                        <h2>MARKET FEED</h2>
+                        <div class="controls">
+                            <span class="live-tag">LIVE</span>
+                        </div>
                     </div>
-                }
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>TIME</th>
+                                    <th>ID</th>
+                                    <th>FIX</th>
+                                    <th>SYMBOL</th>
+                                    <th>TYPE</th>
+                                    <th>PRICE</th>
+                                    <th>SIZE</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var msg in DisplayMessages.Reverse())
+                                {
+                                    <tr class="fade-in">
+                                        <td class="time">@msg.SendingTime.ToString("HH:mm:ss.fff")</td>
+                                        <td class="id">@msg.TemplateId</td>
+                                        <td class="fix">@msg.MsgTypeCode</td>
+                                        <td class="symbol">@msg.Symbol</td>
+                                        <td class="type @msg.EntryType.ToLower()">@msg.EntryType</td>
+                                        <td class="price">@msg.Price.ToString("N2")</td>
+                                        <td class="size">@msg.Size</td>
+                                    </tr>
+                                }
+                                @if (DisplayMessages.Length == 0)
+                                {
+                                    <tr>
+                                        <td colspan="7" class="empty">Waiting for market data...</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section class="packet-monitor">
+                    <h2>RAW PACKETS</h2>
+                    <div class="log-container">
+                        @foreach (var log in DisplayLogs.Reverse())
+                        {
+                            <div class="log-entry">
+                                <span class="log-time">[@DateTime.Now.ToString("HH:mm:ss")]</span>
+                                <span class="log-data">@log</span>
+                            </div>
+                        }
+                    </div>
+                </section>
             </div>
-        </section>
-    </div>
+        </ChildContent>
+        <ErrorContent>
+            <div class="alert alert-danger m-4">
+                <h4>UI Exception Detected</h4>
+                <p>The dashboard encountered a data formatting error. Attempting to recover...</p>
+                <button class="btn btn-outline-danger" @onclick="() => StateHasChanged()">Retry Render</button>
+            </div>
+        </ErrorContent>
+    </ErrorBoundary>
 </div>
+
 
 <style>
     :root {
