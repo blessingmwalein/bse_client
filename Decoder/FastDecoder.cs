@@ -20,17 +20,16 @@ namespace BseDashboard.Decoder
 
         private static void LoadTemplates()
         {
-            // Template 64: Heartbeat 
-            // Hex: 9E C0 83 B0 ... -> PMap 9E, TID C0(64), SeqNum 83(3), MsgType B0('0')
+            // Heartbeat (Template 64)
             var hb = new FastTemplate(64, "Heartbeat");
             hb.Fields.Add(new FastField(34, "SeqNum", FieldType.UInt32, FieldOperator.None));
             hb.Fields.Add(new FastField(35, "MsgType", FieldType.ASCII, FieldOperator.None));
             hb.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.None));
             _templates[64] = hb;
 
-            // Template 193: Incremental Refresh
+            // Incremental Refresh (Template 193)
             var ir = new FastTemplate(193, "Incremental");
-            ir.Fields.Add(new FastField(35, "MsgType", FieldType.ASCII, FieldOperator.Constant, "X"));
+            ir.Fields.Add(new FastField(34, "SeqNum", FieldType.UInt32, FieldOperator.None));
             ir.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.Tail));
             ir.Fields.Add(new FastField(55, "Symbol", FieldType.ASCII, FieldOperator.Copy));
             ir.Fields.Add(new FastField(269, "EntryType", FieldType.ASCII, FieldOperator.Copy));
@@ -47,10 +46,15 @@ namespace BseDashboard.Decoder
             try
             {
                 // 1. Read Presence Map (PMap)
-                uint pMap = 0;
-                while (offset < data.Length) {
+                // PMaps can be multiple bytes. High bit (0x80) is the extension bit.
+                // We collect all bits into a single bit-array.
+                List<bool> pMapBits = new();
+                while (offset < data.Length)
+                {
                     byte b = data[offset++];
-                    pMap = (pMap << 7) | (uint)(b & 0x7F);
+                    for (int i = 6; i >= 0; i--) {
+                        pMapBits.Add((b & (1 << i)) != 0);
+                    }
                     if ((b & 0x80) != 0) break;
                 }
 
@@ -58,22 +62,15 @@ namespace BseDashboard.Decoder
                 int templateId = (int)ReadInteger(data, ref offset);
                 entry.TemplateId = templateId;
 
-                Console.WriteLine($"[FAST] Processing TID:{templateId} PMap:{Convert.ToString(pMap, 2)} Len:{data.Length}");
-
                 if (_templates.TryGetValue(templateId, out var template))
                 {
                     entry.MsgType = template.Name;
-                    int pMapBit = 0;
+                    int bitIndex = 0;
 
                     foreach (var field in template.Fields)
                     {
-                        // Boolean: Does this field occupy a bit in the PMap?
-                        // Mandatory "None" fields do NOT use PMap bits.
-                        // Optional or Operator fields (Constant, Copy, Tail, Delta) DO use bits.
                         bool usesPMap = field.Operator != FieldOperator.None;
-                        
-                        // We consume bits from the PMap starting from the MOST significant bit (Bit 6 of the 7-bit PMap byte)
-                        bool isPresent = !usesPMap || (pMap & (1 << (15 - pMapBit++))) != 0; // Simplified PMap bit walk
+                        bool isPresent = !usesPMap || (bitIndex < pMapBits.Count && pMapBits[bitIndex++]);
 
                         object value = null;
                         switch (field.Operator)
@@ -94,6 +91,7 @@ namespace BseDashboard.Decoder
                                 }
                                 break;
                             case FieldOperator.Delta:
+                                // Delta uses numeric enrichment, for now we read as None
                                 value = ReadInteger(data, ref offset);
                                 break;
                         }
@@ -103,33 +101,41 @@ namespace BseDashboard.Decoder
                 }
                 else
                 {
-                    entry.MsgType = "Unknown Template";
-                    HeuristicScan(data, entry);
+                    entry.MsgType = "Discovering...";
+                    DiscoverFields(data, offset, entry);
                 }
             }
-            catch { HeuristicScan(data, entry); }
+            catch { DiscoverFields(data, 0, entry); }
 
             return entry;
         }
 
-        private static void HeuristicScan(byte[] data, MarketDataEntry entry)
+        private static void DiscoverFields(byte[] data, int offset, MarketDataEntry entry)
         {
             try {
+                // Heuristic Fallback
                 string content = Encoding.ASCII.GetString(data);
                 var match = Regex.Match(content, @"[A-Z0-9]{3,8}-[A-Z]{2}");
                 if (match.Success) entry.Symbol = match.Value;
                 if (content.Contains("FNBB-EQ")) entry.Symbol = "FNBB-EQ";
+                
+                // Try to find the MsgType '0' or 'X' or 'd'
+                if (content.Contains("-0")) entry.MsgTypeCode = "0";
+                else if (content.Contains("-X")) entry.MsgTypeCode = "X";
+                else if (content.Contains("-d")) entry.MsgTypeCode = "d";
             } catch {}
         }
 
         private static void ApplyFieldToEntry(MarketDataEntry entry, FastField field, object value)
         {
             if (value == null) return;
+            string sVal = value.ToString();
+
             switch (field.Id)
             {
-                case 35: entry.MsgTypeCode = value.ToString(); break;
-                case 52: entry.SendingTime = ParseBseTime(value.ToString()); break;
-                case 55: entry.Symbol = value.ToString(); break;
+                case 35: entry.MsgTypeCode = sVal; break;
+                case 52: entry.SendingTime = ParseBseTime(sVal); break;
+                case 55: entry.Symbol = sVal; break;
                 case 270: entry.Price = Convert.ToDecimal(value) / 10000m; break;
                 case 271: entry.Size = Convert.ToInt64(value); break;
             }
@@ -160,7 +166,7 @@ namespace BseDashboard.Decoder
             {
                 byte b = data[offset++];
                 char c = (char)(b & 0x7F);
-                if (c != 0) sb.Append(c);
+                if (c >= 32 && c <= 126) sb.Append(c);
                 if ((b & 0x80) != 0) break;
             }
             return sb.ToString();
@@ -169,8 +175,12 @@ namespace BseDashboard.Decoder
         private static DateTime ParseBseTime(string s)
         {
             try {
-                if (string.IsNullOrEmpty(s) || s.Length < 17) return DateTime.Now;
-                return DateTime.ParseExact(s.Substring(0, 17), "yyyyMMdd-HH:mm:ss", null);
+                // Handle various BSE time formats
+                var match = Regex.Match(s, @"\d{8}-\d{2}:\d{2}:\d{2}");
+                if (match.Success) {
+                    return DateTime.ParseExact(match.Value, "yyyyMMdd-HH:mm:ss", null);
+                }
+                return DateTime.Now;
             } catch { return DateTime.Now; }
         }
     }
