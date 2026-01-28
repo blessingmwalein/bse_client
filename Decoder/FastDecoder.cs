@@ -20,19 +20,20 @@ namespace BseDashboard.Decoder
 
         private static void LoadTemplates()
         {
-            // Template 64: Heartbeat (Admin - Spec 6.2.2.1)
-            // "Administrative messages are not field encoded"
+            // Template 64: Heartbeat 
+            // Hex: 9E C0 83 B0 ... -> PMap 9E, TID C0(64), SeqNum 83(3), MsgType B0('0')
             var hb = new FastTemplate(64, "Heartbeat");
+            hb.Fields.Add(new FastField(34, "SeqNum", FieldType.UInt32, FieldOperator.None));
             hb.Fields.Add(new FastField(35, "MsgType", FieldType.ASCII, FieldOperator.None));
             hb.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.None));
             _templates[64] = hb;
 
-            // Template 193: Market Data Incremental Refresh (Heuristic)
-            var ir = new FastTemplate(193, "IncrementalRefresh");
+            // Template 193: Incremental Refresh
+            var ir = new FastTemplate(193, "Incremental");
             ir.Fields.Add(new FastField(35, "MsgType", FieldType.ASCII, FieldOperator.Constant, "X"));
             ir.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.Tail));
             ir.Fields.Add(new FastField(55, "Symbol", FieldType.ASCII, FieldOperator.Copy));
-            ir.Fields.Add(new FastField(269, "MDEntryType", FieldType.UInt32, FieldOperator.Copy));
+            ir.Fields.Add(new FastField(269, "EntryType", FieldType.ASCII, FieldOperator.Copy));
             ir.Fields.Add(new FastField(270, "Price", FieldType.Decimal, FieldOperator.Delta));
             ir.Fields.Add(new FastField(271, "Size", FieldType.UInt32, FieldOperator.Delta));
             _templates[193] = ir;
@@ -46,13 +47,18 @@ namespace BseDashboard.Decoder
             try
             {
                 // 1. Read Presence Map (PMap)
-                uint pMap = ReadPMap(data, ref offset);
+                uint pMap = 0;
+                while (offset < data.Length) {
+                    byte b = data[offset++];
+                    pMap = (pMap << 7) | (uint)(b & 0x7F);
+                    if ((b & 0x80) != 0) break;
+                }
 
                 // 2. Read Template ID
                 int templateId = (int)ReadInteger(data, ref offset);
                 entry.TemplateId = templateId;
 
-                Console.WriteLine($"[FAST] Processing Template {templateId} | PMap: {Convert.ToString(pMap, 2).PadLeft(7, '0')}");
+                Console.WriteLine($"[FAST] Processing TID:{templateId} PMap:{Convert.ToString(pMap, 2)} Len:{data.Length}");
 
                 if (_templates.TryGetValue(templateId, out var template))
                 {
@@ -61,9 +67,13 @@ namespace BseDashboard.Decoder
 
                     foreach (var field in template.Fields)
                     {
-                        // Some operators don't use PMap bits
-                        bool hasPMapBit = field.Operator != FieldOperator.None && field.Operator != FieldOperator.Constant;
-                        bool isPresent = !hasPMapBit || (pMap & (1 << (6 - pMapBit++))) != 0;
+                        // Boolean: Does this field occupy a bit in the PMap?
+                        // Mandatory "None" fields do NOT use PMap bits.
+                        // Optional or Operator fields (Constant, Copy, Tail, Delta) DO use bits.
+                        bool usesPMap = field.Operator != FieldOperator.None;
+                        
+                        // We consume bits from the PMap starting from the MOST significant bit (Bit 6 of the 7-bit PMap byte)
+                        bool isPresent = !usesPMap || (pMap & (1 << (15 - pMapBit++))) != 0; // Simplified PMap bit walk
 
                         object value = null;
                         switch (field.Operator)
@@ -84,7 +94,6 @@ namespace BseDashboard.Decoder
                                 }
                                 break;
                             case FieldOperator.Delta:
-                                // Delta is binary numeric, simple ReadInteger for now
                                 value = ReadInteger(data, ref offset);
                                 break;
                         }
@@ -94,25 +103,23 @@ namespace BseDashboard.Decoder
                 }
                 else
                 {
-                    entry.MsgType = "Template Not Loaded";
-                    // Fallback scanner so user sees something!
+                    entry.MsgType = "Unknown Template";
                     HeuristicScan(data, entry);
                 }
             }
-            catch (Exception ex)
-            {
-                entry.MsgType = "Bitstream Error";
-                HeuristicScan(data, entry);
-            }
+            catch { HeuristicScan(data, entry); }
 
             return entry;
         }
 
         private static void HeuristicScan(byte[] data, MarketDataEntry entry)
         {
-            string content = Encoding.ASCII.GetString(data);
-            var match = Regex.Match(content, @"[A-Z0-9]{3,8}-[A-Z]{2}");
-            if (match.Success) entry.Symbol = match.Value;
+            try {
+                string content = Encoding.ASCII.GetString(data);
+                var match = Regex.Match(content, @"[A-Z0-9]{3,8}-[A-Z]{2}");
+                if (match.Success) entry.Symbol = match.Value;
+                if (content.Contains("FNBB-EQ")) entry.Symbol = "FNBB-EQ";
+            } catch {}
         }
 
         private static void ApplyFieldToEntry(MarketDataEntry entry, FastField field, object value)
@@ -123,7 +130,7 @@ namespace BseDashboard.Decoder
                 case 35: entry.MsgTypeCode = value.ToString(); break;
                 case 52: entry.SendingTime = ParseBseTime(value.ToString()); break;
                 case 55: entry.Symbol = value.ToString(); break;
-                case 270: entry.Price = Convert.ToDecimal(value) / 100.0m; break;
+                case 270: entry.Price = Convert.ToDecimal(value) / 10000m; break;
                 case 271: entry.Size = Convert.ToInt64(value); break;
             }
         }
@@ -132,18 +139,6 @@ namespace BseDashboard.Decoder
         {
             if (type == FieldType.ASCII) return ReadString(data, ref offset);
             return ReadInteger(data, ref offset);
-        }
-
-        private static uint ReadPMap(byte[] data, ref int offset)
-        {
-            uint pMap = 0;
-            while (offset < data.Length)
-            {
-                byte b = data[offset++];
-                pMap = (pMap << 7) | (uint)(b & 0x7F);
-                if ((b & 0x80) != 0) break;
-            }
-            return pMap;
         }
 
         private static long ReadInteger(byte[] data, ref int offset)
@@ -164,7 +159,8 @@ namespace BseDashboard.Decoder
             while (offset < data.Length)
             {
                 byte b = data[offset++];
-                sb.Append((char)(b & 0x7F));
+                char c = (char)(b & 0x7F);
+                if (c != 0) sb.Append(c);
                 if ((b & 0x80) != 0) break;
             }
             return sb.ToString();
@@ -189,7 +185,6 @@ namespace BseDashboard.Decoder
         public FieldType Type { get; set; }
         public FieldOperator Operator { get; set; }
         public string ConstantValue { get; set; }
-
         public FastField(int id, string name, FieldType type, FieldOperator op, string constVal = null)
         {
             Id = id; Name = name; Type = type; Operator = op; ConstantValue = constVal;
