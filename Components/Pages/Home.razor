@@ -66,14 +66,14 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                @foreach (var msg in DisplayMessages.Reverse())
+                                @foreach (var msg in DisplayMessages)
                                 {
                                     <tr class="fade-in">
                                         <td class="time">@msg.SendingTime.ToString("HH:mm:ss.fff")</td>
                                         <td class="id">@msg.TemplateId</td>
                                         <td class="fix">@msg.MsgTypeCode</td>
                                         <td class="symbol">@msg.Symbol</td>
-                                        <td class="type @msg.EntryType.ToLower()">@msg.EntryType</td>
+                                        <td class="type @(msg.EntryType?.ToLower() ?? "none")">@msg.EntryType</td>
                                         <td class="price">@msg.Price.ToString("N2")</td>
                                         <td class="size">@msg.Size</td>
                                     </tr>
@@ -92,7 +92,7 @@
                 <section class="packet-monitor">
                     <h2>RAW PACKETS</h2>
                     <div class="log-container">
-                        @foreach (var log in DisplayLogs.Reverse())
+                        @foreach (var log in DisplayLogs)
                         {
                             <div class="log-entry">
                                 <span class="log-time">[@DateTime.Now.ToString("HH:mm:ss")]</span>
@@ -295,14 +295,23 @@
     private int HeartbeatCount = 0;
     private DateTime? LastHeartbeat;
     private readonly object _lock = new();
+    private System.Threading.Timer? _throttleTimer;
 
     protected override void OnInitialized()
     {
         DataService.OnNewMessage += HandleNewMessage;
+        
+        // Update UI at most every 250ms
+        _throttleTimer = new System.Threading.Timer(_ => 
+        {
+            InvokeAsync(StateHasChanged);
+        }, null, 250, 250);
     }
 
     private void HandleNewMessage(MarketDataEntry entry)
     {
+        if (entry == null) return;
+
         try 
         {
             lock (_lock)
@@ -313,7 +322,7 @@
                 _logBuffer.Add(entry.RawHex);
                 if (_logBuffer.Count > 50) _logBuffer.RemoveAt(0);
 
-                if (entry.MsgType.Contains("Heartbeat"))
+                if (entry.MsgType?.Contains("Heartbeat") == true)
                 {
                     HeartbeatCount++;
                     LastHeartbeat = DateTime.Now;
@@ -324,20 +333,21 @@
                     TrackedSymbols.Add(entry.Symbol);
                 }
 
-                DisplayMessages = _messageBuffer.ToArray();
-                DisplayLogs = _logBuffer.ToArray();
+                // Create reversed snapshots for the UI to use without further processing
+                DisplayMessages = _messageBuffer.AsEnumerable().Reverse().ToArray();
+                DisplayLogs = _logBuffer.AsEnumerable().Reverse().ToArray();
             }
-
-            InvokeAsync(StateHasChanged);
         }
-        catch { /* Prevent Background thread crash */ }
+        catch { /* Safe background skip */ }
     }
 
     public void Dispose()
     {
         DataService.OnNewMessage -= HandleNewMessage;
+        _throttleTimer?.Dispose();
     }
 }
+
 
 
 
