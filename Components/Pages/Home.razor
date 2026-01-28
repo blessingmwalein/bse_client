@@ -66,19 +66,23 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                @foreach (var msg in DisplayMessages)
+                                @if (DisplayMessages != null)
                                 {
-                                    <tr class="fade-in">
-                                        <td class="time">@msg.SendingTime.ToString("HH:mm:ss.fff")</td>
-                                        <td class="id">@msg.TemplateId</td>
-                                        <td class="fix">@msg.MsgTypeCode</td>
-                                        <td class="symbol">@msg.Symbol</td>
-                                        <td class="type @(msg.EntryType?.ToLower() ?? "none")">@msg.EntryType</td>
-                                        <td class="price">@msg.Price.ToString("N2")</td>
-                                        <td class="size">@msg.Size</td>
-                                    </tr>
+                                    @foreach (var msg in DisplayMessages)
+                                    {
+                                        if (msg == null) continue;
+                                        <tr class="fade-in">
+                                            <td class="time">@msg.SendingTime.ToString("HH:mm:ss.fff")</td>
+                                            <td class="id">@msg.TemplateId</td>
+                                            <td class="fix">@(msg.MsgTypeCode ?? "-")</td>
+                                            <td class="symbol">@(msg.Symbol ?? "-")</td>
+                                            <td class="type @(msg.EntryType?.ToLower() ?? "none")">@(msg.EntryType ?? "-")</td>
+                                            <td class="price">@msg.Price.ToString("N2")</td>
+                                            <td class="size">@msg.Size</td>
+                                        </tr>
+                                    }
                                 }
-                                @if (DisplayMessages.Length == 0)
+                                @if (DisplayMessages == null || DisplayMessages.Length == 0)
                                 {
                                     <tr>
                                         <td colspan="7" class="empty">Waiting for market data...</td>
@@ -92,25 +96,33 @@
                 <section class="packet-monitor">
                     <h2>RAW PACKETS</h2>
                     <div class="log-container">
-                        @foreach (var log in DisplayLogs)
+                        @if (DisplayLogs != null)
                         {
-                            <div class="log-entry">
-                                <span class="log-time">[@DateTime.Now.ToString("HH:mm:ss")]</span>
-                                <span class="log-data">@log</span>
-                            </div>
+                            @foreach (var log in DisplayLogs)
+                            {
+                                if (string.IsNullOrEmpty(log)) continue;
+                                <div class="log-entry">
+                                    <span class="log-time">[@DateTime.Now.ToString("HH:mm:ss")]</span>
+                                    <span class="log-data">@log</span>
+                                </div>
+                            }
                         }
                     </div>
                 </section>
             </div>
         </ChildContent>
-        <ErrorContent>
+        <ErrorContent Context="ex">
             <div class="alert alert-danger m-4">
-                <h4>UI Exception Detected</h4>
-                <p>The dashboard encountered a data formatting error. Attempting to recover...</p>
-                <button class="btn btn-outline-danger" @onclick="() => StateHasChanged()">Retry Render</button>
+                <h4>Dashboard Data Error</h4>
+                <p>An error occurred while rendering market data. This is usually caused by a malformed packet.</p>
+                <div class="mt-2">
+                    <code>@ex.Message</code>
+                </div>
+                <button class="btn btn-primary mt-3" @onclick="() => { /* Logic to clear buffers could go here */ }">Clear Feed</button>
             </div>
         </ErrorContent>
     </ErrorBoundary>
+
 </div>
 
 

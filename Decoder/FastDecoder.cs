@@ -21,15 +21,13 @@ namespace BseDashboard.Decoder
         private static void LoadTemplates()
         {
             // Heartbeat (Template 64)
-            // Layout: PMap(1), TID(1), SeqNum(1), MsgType(1), SendingTime(String)
             var hb = new FastTemplate(64, "Heartbeat");
             hb.Fields.Add(new FastField(34, "SeqNum", FieldType.UInt32, FieldOperator.None));
             hb.Fields.Add(new FastField(35, "MsgType", FieldType.ASCII, FieldOperator.None)); 
             hb.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.None));
             _templates[64] = hb;
 
-            // Application Templates (16320, 16352)
-            // They appear to have a different header structure
+            // BSE Template 16320 & 16352 (Observed IDs for IncRefresh/SecDef)
             _templates[16320] = CreateAppTemplate(16320, "MarketData");
             _templates[16352] = CreateAppTemplate(16352, "SecurityDef");
         }
@@ -37,10 +35,10 @@ namespace BseDashboard.Decoder
         private static FastTemplate CreateAppTemplate(int id, string name)
         {
             var t = new FastTemplate(id, name);
-            // Based on hex EC-7F-E0-94-32...
-            // 94 is SeqNum, 32... is SendingTime
+            // These messages typically have Header -> SeqNum -> Time -> Multi-field body
             t.Fields.Add(new FastField(34, "SeqNum", FieldType.UInt32, FieldOperator.None));
             t.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.None));
+            // Symbols and Prices follow in a repeating group or direct fields
             return t;
         }
 
@@ -60,14 +58,12 @@ namespace BseDashboard.Decoder
                 {
                     byte b = data[offset++];
                     for (int i = 6; i >= 0; i--) pMapBits.Add((b & (1 << i)) != 0);
-                    if ((b & 0x80) != 0) break; // Last bit of PMap
+                    if ((b & 0x80) != 0) break;
                 }
 
                 // 2. Read Template ID
                 int templateId = (int)ReadInteger(data, ref offset);
                 entry.TemplateId = templateId;
-
-                Console.WriteLine($"[FAST] TID:{templateId} PMapLen:{pMapBits.Count} Offset:{offset}");
 
                 if (_templates.TryGetValue(templateId, out var template))
                 {
@@ -76,8 +72,8 @@ namespace BseDashboard.Decoder
 
                     foreach (var field in template.Fields)
                     {
-                        bool isPresent = field.Operator == FieldOperator.None || 
-                                       (bitIndex < pMapBits.Count && pMapBits[bitIndex++]);
+                        bool usesPMap = field.Operator != FieldOperator.None && field.Operator != FieldOperator.Constant;
+                        bool isPresent = !usesPMap || (bitIndex < pMapBits.Count && pMapBits[bitIndex++]);
 
                         object value = null;
                         if (isPresent)
@@ -89,36 +85,46 @@ namespace BseDashboard.Decoder
                     }
                 }
                 
-                // Final Fallback: Scrape for symbol and time regardless of template success
-                DeepScrape(data, entry);
+                // Fallback: Aggressive Scrape for Symbols (e.g. FNBB-EQ, BIHL-EQ)
+                DiscoverFields(data, entry);
             }
-            catch { DeepScrape(data, entry); }
+            catch { DiscoverFields(data, entry); }
 
             return entry;
         }
 
-        private static void DeepScrape(byte[] data, MarketDataEntry entry)
+        private static void DiscoverFields(byte[] data, MarketDataEntry entry)
         {
             try {
                 string content = Encoding.ASCII.GetString(data);
                 
-                // Symbol Discovery (BSE instruments are usually 3-8 chars + -EQ)
-                var match = Regex.Match(content, @"[A-Z0-9]{2,8}-[A-Z]{2}");
-                if (match.Success) entry.Symbol = match.Value;
-                else if (content.Contains("FNBB-EQ")) entry.Symbol = "FNBB-EQ";
+                // 1. Precise Symbol Scanner (Filters out timestamps)
+                // Looks for: CAPITAL LETTERS (3-10) and -EQ or -Indices or -CP
+                var symMatch = Regex.Match(content, @"[A-Z]{3,10}-(EQ|Indices|CP|Bond)");
+                if (symMatch.Success) {
+                    entry.Symbol = symMatch.Value;
+                }
 
-                // Time Discovery
+                // 2. Precise Time Scanner
                 var timeMatch = Regex.Match(content, @"\d{8}-\d{2}:\d{2}:\d{2}");
-                if (timeMatch.Success) entry.SendingTime = ParseBseTime(timeMatch.Value);
+                if (timeMatch.Success) {
+                    entry.SendingTime = ParseBseTime(timeMatch.Value);
+                }
 
-                // Entry Type (Discovery of Bid/Offer/Trade)
-                if (content.Contains("Bid")) entry.EntryType = "Bid";
-                else if (content.Contains("Offer")) entry.EntryType = "Offer";
-                else if (content.Contains("Trade")) entry.EntryType = "Trade";
-                
+                // 3. Fix Type Discovery
                 if (entry.TemplateId == 64) {
                     entry.MsgTypeCode = "0";
                     entry.EntryType = "Admin";
+                }
+                else {
+                    // Application messages
+                    entry.MsgTypeCode = "X";
+                    entry.EntryType = "Update";
+                    
+                    // Crude discovery for Entry Types
+                    if (content.Contains("Bid")) entry.EntryType = "Bid";
+                    else if (content.Contains("Offer")) entry.EntryType = "Offer";
+                    else if (content.Contains("Trade")) entry.EntryType = "Trade";
                 }
             } catch {}
         }
@@ -132,22 +138,10 @@ namespace BseDashboard.Decoder
                     case 35: entry.MsgTypeCode = value.ToString(); break;
                     case 52: entry.SendingTime = ParseBseTime(value.ToString()); break;
                     case 55: entry.Symbol = value.ToString(); break;
-                    case 270: entry.Price = SafeDecimal(value) / 10000m; break;
-                    case 271: entry.Size = SafeLong(value); break;
+                    case 270: entry.Price = Convert.ToDecimal(value) / 10000m; break;
+                    case 271: entry.Size = Convert.ToInt64(value); break;
                 }
             } catch {}
-        }
-
-        private static decimal SafeDecimal(object val) 
-        {
-            if (decimal.TryParse(val?.ToString(), out var d)) return d;
-            return 0;
-        }
-
-        private static long SafeLong(object val)
-        {
-            if (long.TryParse(val?.ToString(), out var l)) return l;
-            return 0;
         }
 
         private static long ReadInteger(byte[] data, ref int offset)
@@ -167,7 +161,6 @@ namespace BseDashboard.Decoder
             StringBuilder sb = new StringBuilder();
             while (offset < data.Length)
             {
-                if (offset >= data.Length) break;
                 byte b = data[offset++];
                 char c = (char)(b & 0x7F);
                 if (c >= 32 && c <= 126) sb.Append(c);
@@ -180,9 +173,9 @@ namespace BseDashboard.Decoder
         {
             try {
                 if (string.IsNullOrEmpty(s)) return DateTime.Now;
-                if (s.Length >= 17) {
-                    if (DateTime.TryParseExact(s.Substring(0, 17), "yyyyMMdd-HH:mm:ss", null, System.Globalization.DateTimeStyles.AssumeUniversal, out var dt))
-                        return dt;
+                var match = Regex.Match(s, @"\d{8}-\d{2}:\d{2}:\d{2}");
+                if (match.Success) {
+                    return DateTime.ParseExact(match.Value, "yyyyMMdd-HH:mm:ss", null);
                 }
                 return DateTime.Now;
             } catch { return DateTime.Now; }
