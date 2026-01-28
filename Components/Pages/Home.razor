@@ -55,29 +55,31 @@
                     <thead>
                         <tr>
                             <th>TIME</th>
+                            <th>ID</th>
+                            <th>FIX</th>
                             <th>SYMBOL</th>
                             <th>TYPE</th>
                             <th>PRICE</th>
                             <th>SIZE</th>
-                            <th>MSG</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var msg in Messages.TakeLast(10).Reverse())
+                        @foreach (var msg in DisplayMessages.Reverse())
                         {
                             <tr class="fade-in">
                                 <td class="time">@msg.SendingTime.ToString("HH:mm:ss.fff")</td>
-                                <td class="symbol">@(string.IsNullOrEmpty(msg.Symbol) ? "-" : msg.Symbol)</td>
+                                <td class="id">@msg.TemplateId</td>
+                                <td class="fix">@msg.MsgTypeCode</td>
+                                <td class="symbol">@msg.Symbol</td>
                                 <td class="type @msg.EntryType.ToLower()">@msg.EntryType</td>
                                 <td class="price">@msg.Price.ToString("N2")</td>
                                 <td class="size">@msg.Size</td>
-                                <td class="msg">@msg.MsgType</td>
                             </tr>
                         }
-                        @if (!Messages.Any())
+                        @if (DisplayMessages.Length == 0)
                         {
                             <tr>
-                                <td colspan="6" class="empty">Waiting for market data...</td>
+                                <td colspan="7" class="empty">Waiting for market data...</td>
                             </tr>
                         }
                     </tbody>
@@ -88,7 +90,7 @@
         <section class="packet-monitor">
             <h2>RAW PACKETS</h2>
             <div class="log-container">
-                @foreach (var log in RawLogs.TakeLast(20).Reverse())
+                @foreach (var log in DisplayLogs.Reverse())
                 {
                     <div class="log-entry">
                         <span class="log-time">[@DateTime.Now.ToString("HH:mm:ss")]</span>
@@ -273,11 +275,14 @@
 </style>
 
 @code {
-    private List<MarketDataEntry> Messages = new();
-    private List<string> RawLogs = new();
+    private MarketDataEntry[] DisplayMessages = Array.Empty<MarketDataEntry>();
+    private string[] DisplayLogs = Array.Empty<string>();
+    private List<MarketDataEntry> _messageBuffer = new();
+    private List<string> _logBuffer = new();
     private HashSet<string> TrackedSymbols = new();
     private int HeartbeatCount = 0;
     private DateTime? LastHeartbeat;
+    private readonly object _lock = new();
 
     protected override void OnInitialized()
     {
@@ -286,27 +291,34 @@
 
     private void HandleNewMessage(MarketDataEntry entry)
     {
-        InvokeAsync(() =>
+        try 
         {
-            Messages.Add(entry);
-            RawLogs.Add(entry.RawHex);
-            
-            if (entry.MsgType == "Heartbeat")
+            lock (_lock)
             {
-                HeartbeatCount++;
-                LastHeartbeat = DateTime.Now;
-            }
-            
-            if (!string.IsNullOrEmpty(entry.Symbol))
-            {
-                TrackedSymbols.Add(entry.Symbol);
+                _messageBuffer.Add(entry);
+                if (_messageBuffer.Count > 50) _messageBuffer.RemoveAt(0);
+                
+                _logBuffer.Add(entry.RawHex);
+                if (_logBuffer.Count > 50) _logBuffer.RemoveAt(0);
+
+                if (entry.MsgType.Contains("Heartbeat"))
+                {
+                    HeartbeatCount++;
+                    LastHeartbeat = DateTime.Now;
+                }
+                
+                if (!string.IsNullOrEmpty(entry.Symbol))
+                {
+                    TrackedSymbols.Add(entry.Symbol);
+                }
+
+                DisplayMessages = _messageBuffer.ToArray();
+                DisplayLogs = _logBuffer.ToArray();
             }
 
-            if (Messages.Count > 100) Messages.RemoveAt(0);
-            if (RawLogs.Count > 100) RawLogs.RemoveAt(0);
-
-            StateHasChanged();
-        });
+            InvokeAsync(StateHasChanged);
+        }
+        catch { /* Prevent Background thread crash */ }
     }
 
     public void Dispose()
@@ -314,3 +326,8 @@
         DataService.OnNewMessage -= HandleNewMessage;
     }
 }
+
+
+
+
+

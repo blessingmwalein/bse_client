@@ -4,22 +4,18 @@ namespace BseDashboard.Models
 {
     public class MarketDataEntry
     {
-        public string Symbol { get; set; } = string.Empty;
-        public string MsgType { get; set; } = string.Empty;
+        public string Symbol { get; set; } = "-";
+        public string MsgType { get; set; } = "Unknown";
+        public string MsgTypeCode { get; set; } = ""; // 0, X, d, etc.
         public DateTime SendingTime { get; set; }
-        public string EntryType { get; set; } = string.Empty; // Bid, Offer, Trade
+        public string EntryType { get; set; } = "-"; // Bid, Offer, Trade
         public decimal Price { get; set; }
         public long Size { get; set; }
+        public int TemplateId { get; set; }
         public string RawHex { get; set; } = string.Empty;
-        public string InstrumentStatus { get; set; } = "Active";
-    }
-
-    public enum BseMsgType
-    {
-        Heartbeat = 0,
-        SecurityDefinition = 'd',
-        SecurityStatus = 'f',
-        IncrementalRefresh = 'X',
-        Snapshot = 'W'
+        
+        // Extended fields from doc
+        public string MDUpdateAction { get; set; } = "0"; // 0=New, 1=Update...
+        public string TickDirection { get; set; } = "";
     }
 }
