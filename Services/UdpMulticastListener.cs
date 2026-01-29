@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO;
 using Microsoft.Extensions.Hosting;
 using BseDashboard.Models;
 using BseDashboard.Decoder;
@@ -20,6 +21,7 @@ namespace BseDashboard.Services
         private readonly string _mcastGroup = "239.255.190.100";
         private readonly int _port = 30540;
         private readonly MarketDataService _dataService;
+        private readonly string _logPath = "raw_feed_log.txt";
 
         public UdpMulticastListener(MarketDataService dataService)
         {
@@ -41,6 +43,13 @@ namespace BseDashboard.Services
                 {
                     var result = await udp.ReceiveAsync(stoppingToken);
                     var entry = FastDecoder.Decode(result.Buffer);
+                    
+                    // Log raw hex for offline decoding work
+                    try {
+                        string hex = BitConverter.ToString(result.Buffer) + Environment.NewLine;
+                        await File.AppendAllTextAsync(_logPath, hex, stoppingToken);
+                    } catch { /* Suppress logging errors to keep feed live */ }
+
                     _dataService.Notify(entry);
                 }
             }
