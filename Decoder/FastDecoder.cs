@@ -108,10 +108,16 @@ namespace BseDashboard.Decoder
                         // Found a potential symbol
                         StringBuilder sb = new();
                         for (int k = 0; k < length; k++) sb.Append((char)(data[i + k] & 0x7F));
-                        entry.Symbol = sb.ToString();
+                        string potentialSymbol = sb.ToString();
 
-                        // Clean common BSE suffixes if needed (though usually we want the full symbol)
-                        // entry.Symbol = entry.Symbol.TrimEnd('O', 'Q'); 
+                        // Validation: BSE Symbols shouldn't look like parts of a date (e.g., 20260202-10)
+                        if (Regex.IsMatch(potentialSymbol, @"^\d{4,8}-\d{2}$"))
+                        {
+                            i += length; // Skip this date part
+                            continue;
+                        }
+
+                        entry.Symbol = potentialSymbol;
 
                         // 3. Extract Numerical Values (Price, Size) following the symbol
                         int scanOffset = i + length;
@@ -132,30 +138,29 @@ namespace BseDashboard.Decoder
                                 // Index 1: Often Price (Mantissa)
                                 // Index 2: Often Size
                                 
-                                // Price Handling (Usually 2 decimal places if not PMap controlled)
-                                long rawPrice = values.Count > 1 ? values[1] : 0;
-                                if (rawPrice != 0)
+                                // Price Handling (Usually 2 decimal places)
+                                long rawPrice = Math.Abs(values.Count > 1 ? values[1] : 0);
+                                if (rawPrice > 10) // Filter out very small values that might be IDs
                                 {
                                     entry.Price = rawPrice / 100m;
-                                    // Handle Absolute values vs small deltas
-                                    if (entry.Price > 0 && entry.Price < 1000) 
-                                        _decimalDictionary[entry.TemplateId] = entry.Price;
+                                    _decimalDictionary[entry.TemplateId] = entry.Price;
                                 }
 
                                 // Size Handling
                                 if (values.Count > 2)
                                 {
                                     long rawSize = Math.Abs(values[2]);
-                                    if (rawSize > 0) entry.Size = rawSize;
+                                    if (rawSize > 0 && rawSize < 1000000) entry.Size = rawSize;
                                 }
 
                                 // Match Entry Type if possible
                                 if (values[0] == 0) entry.EntryType = "Bid";
                                 else if (values[0] == 1) entry.EntryType = "Offer";
                                 else if (values[0] == 2) entry.EntryType = "Trade";
+                                else entry.EntryType = "Update";
                             }
                         }
-                        break; // Stop after first valid symbol match in this packet
+                        break; // Stop after first valid symbol match
                     }
                 }
             } catch { }
