@@ -9,20 +9,11 @@ namespace BseDashboard.Decoder
 {
     public class FastDecoder
     {
-        // BSE Market Data Field Mapping (Heuristic)
-        private static Dictionary<int, FastTemplate> _templates = new();
-        private static Dictionary<string, object> _dictionary = new();
-        private static readonly object _lock = new();
-
-        static FastDecoder()
-        {
-            // Heartbeat (Standard)
-            var hb = new FastTemplate(64, "Heartbeat");
-            hb.Fields.Add(new FastField(34, "SeqNum", FieldType.UInt32, FieldOperator.None));
-            hb.Fields.Add(new FastField(35, "MsgType", FieldType.ASCII, FieldOperator.None)); 
-            hb.Fields.Add(new FastField(52, "SendingTime", FieldType.ASCII, FieldOperator.None));
-            _templates[64] = hb;
-        }
+        // FAST State Management (Dictionaries for Copy/Delta operators)
+        private static readonly Dictionary<int, long> _intDictionary = new();
+        private static readonly Dictionary<int, decimal> _decimalDictionary = new();
+        private static readonly Dictionary<int, string> _stringDictionary = new();
+        private static readonly object _stateLock = new();
 
         public static MarketDataEntry Decode(byte[] data)
         {
@@ -30,116 +21,144 @@ namespace BseDashboard.Decoder
                 RawHex = BitConverter.ToString(data),
                 SendingTime = DateTime.Now,
                 Symbol = "-",
-                MsgTypeCode = "X",
-                EntryType = "Update"
+                MsgTypeCode = "?",
+                EntryType = "Status"
             };
-
-            int offset = 0;
 
             try
             {
-                // 1. Detect and Skip Potential PDU Headers
-                // BSE packets sometimes have 1-5 bytes of header before PMap
-                // If the first byte doesn't look like a PMap (0x80 set elsewhere), 
-                // we scan for the first valid PMap/TID sequence.
-                if (data[0] == 0xF8 || data[0] == 0x01) offset = FindStartOfFast(data);
-
-                // 2. Read Presence Map (PMap)
-                uint pMap = ReadPMap(data, ref offset);
-
-                // 3. Read Template ID
-                int templateId = (int)ReadInteger(data, ref offset);
-                entry.TemplateId = templateId;
-
-                // 4. Decode if known, or DeepScrape if unknown
-                if (_templates.TryGetValue(templateId, out var template))
-                {
-                    entry.MsgType = template.Name;
-                    DecodeFields(data, ref offset, template, pMap, entry);
-                }
+                int offset = 0;
                 
-                // 5. Always perform DeepScrape to catch Symbol, Price, Size
+                // 1. Read PMap (Prefix Map)
+                // PMaps in FAST are bitmasks indicating which fields are present/modified.
+                // We'll skip it for now and look for the Template ID.
+                uint pMap = (uint)ReadUInt(data, ref offset); 
+                
+                // 2. Read Template ID (Usually follows PMap)
+                entry.TemplateId = (int)ReadUInt(data, ref offset);
+
+                if (entry.TemplateId == 64) // Heartbeat
+                {
+                    entry.MsgTypeCode = "0";
+                    entry.EntryType = "Admin";
+                    entry.MsgType = "Heartbeat";
+                    // Skip rest of administrative fields for brevity or use Scrape
+                }
+                else if (entry.TemplateId == 193 || entry.TemplateId == 115) // Market Data Incremental Refresh
+                {
+                    entry.MsgTypeCode = "X";
+                    entry.EntryType = "Update";
+                    entry.MsgType = "MarketData";
+                    
+                    // Structural Decode for Template 193
+                    // According to templates.xml:
+                    // MsgType (35), SendingTime (52), Sequence MDEntries [NoMDEntries (268), Symbol (55), MDEntryType (269), MDEntryPx (270), MDEntrySize (271)]
+                    
+                    // Skip MsgType (Constant 'X') and SendingTime (Tail)
+                    // In a real FAST engine, we'd update SendingTime in the dictionary.
+                    
+                    // We'll use the DeepScrape for the variable length string fields 
+                    // and use the dictionary for the numerical Delta fields.
+                }
+
+                // 3. Fallback / Hybrid Scrape
+                // BSE feed often has plaintext-like segments (Symbol names, Dates)
                 DeepScrape(data, entry);
             }
-            catch { DeepScrape(data, entry); }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Decoder Error] {ex.Message}");
+            }
 
             return entry;
-        }
-
-        private static int FindStartOfFast(byte[] data)
-        {
-            // Scan for common TID patterns like 64 (0x40|0x80 = 0xC0) or 16xxx (0x7F 0xC0/E0)
-            for (int i = 0; i < Math.Min(data.Length - 2, 8); i++)
-            {
-                if (data[i] == 0xC0) return Math.Max(0, i - 1); // 1-byte PMap before TID 64
-                if (data[i] == 0x7F && (data[i+1] & 0x80) != 0) return Math.Max(0, i - 1);
-            }
-            return 0;
-        }
-
-        private static void DecodeFields(byte[] data, ref int offset, FastTemplate template, uint pMap, MarketDataEntry entry)
-        {
-            int bitIndex = 0;
-            foreach (var field in template.Fields)
-            {
-                bool usesPMap = field.Operator != FieldOperator.None;
-                bool isPresent = !usesPMap || (pMap & (1u << (15 - bitIndex++))) != 0;
-
-                if (isPresent)
-                {
-                    object value = (field.Type == FieldType.ASCII) ? ReadString(data, ref offset) : ReadInteger(data, ref offset);
-                    ApplyFieldToEntry(entry, field, value);
-                }
-            }
         }
 
         private static void DeepScrape(byte[] data, MarketDataEntry entry)
         {
             try {
-                string content = Encoding.ASCII.GetString(data);
-                
-                // Precise Symbol Discovery
-                var symMatch = Regex.Match(content, @"[A-Z]{2,10}-(EQ|Indices|CP|Bond)");
-                if (symMatch.Success) {
-                    entry.Symbol = symMatch.Value;
+                // 1. Time Scrape - Scan for potential BSE date strings (yyyyMMdd-HH:mm:ss)
+                string fullContent = Encoding.ASCII.GetString(data.Select(b => (byte)(b & 0x7F)).ToArray());
+                var timeMatch = Regex.Match(fullContent, @"(\d{8}-\d{2}:\d{2}:\d{2})");
+                if (timeMatch.Success) entry.SendingTime = ParseBseTime(timeMatch.Value);
+
+                // 2. Custom Symbol & Value Scraper
+                // We scan the raw bytes for sequences that match BSE symbol patterns (e.g., ABC-EQ)
+                // but we handle the FAST stop-bit (0x80) on the last character.
+                for (int i = 0; i < data.Length - 5; i++)
+                {
+                    int length = 0;
+                    bool hasDash = false;
                     
-                    // Look for Price/Size immediately after the symbol in the hex
-                    int symOffset = FindSubArray(data, Encoding.ASCII.GetBytes(entry.Symbol));
-                    if (symOffset != -1)
+                    // Scan for Symbol: Uppercase letters, digits, or '-'
+                    while (i + length < data.Length && length < 15)
                     {
-                        int dataOffset = symOffset + entry.Symbol.Length;
-                        
-                        // Extract Price (Patterns like 82-8D -> 2.13 or B1-82 -> 0.49?)
-                        // In many BSE packets, the next few bytes with 0x80 bits are the values
-                        List<long> values = new();
-                        int scanOffset = dataOffset;
-                        while(values.Count < 5 && scanOffset < data.Length)
+                        byte b = data[i + length];
+                        byte pure = (byte)(b & 0x7F);
+                        if ((pure >= 'A' && pure <= 'Z') || (pure >= '0' && pure <= '9') || pure == '-')
                         {
-                            if ((data[scanOffset] & 0x80) != 0)
-                            {
-                                values.Add(data[scanOffset] & 0x7F);
-                            }
-                            scanOffset++;
+                            if (pure == '-') hasDash = true;
+                            length++;
+                            if ((b & 0x80) != 0) break; // FAST Stop Bit
+                        }
+                        else break;
+                    }
+
+                    if (length >= 4 && hasDash)
+                    {
+                        // Found a potential symbol
+                        StringBuilder sb = new();
+                        for (int k = 0; k < length; k++) sb.Append((char)(data[i + k] & 0x7F));
+                        entry.Symbol = sb.ToString();
+
+                        // Clean common BSE suffixes if needed (though usually we want the full symbol)
+                        // entry.Symbol = entry.Symbol.TrimEnd('O', 'Q'); 
+
+                        // 3. Extract Numerical Values (Price, Size) following the symbol
+                        int scanOffset = i + length;
+                        List<long> values = new();
+                        while (values.Count < 10 && scanOffset < data.Length)
+                        {
+                            try {
+                                values.Add(ReadInt(data, ref scanOffset));
+                            } catch { break; }
                         }
 
                         if (values.Count >= 2)
                         {
-                            // If we see 2 and 87 -> 2.87
-                            entry.Price = values[0] + (values[1] / 100m);
-                            entry.Size = values.Count > 2 ? values[values.Count-1] : 0;
+                            lock (_stateLock)
+                            {
+                                // BSE Heuristic:
+                                // Index 0: Often MDEntryType or sequence ID
+                                // Index 1: Often Price (Mantissa)
+                                // Index 2: Often Size
+                                
+                                // Price Handling (Usually 2 decimal places if not PMap controlled)
+                                long rawPrice = values.Count > 1 ? values[1] : 0;
+                                if (rawPrice != 0)
+                                {
+                                    entry.Price = rawPrice / 100m;
+                                    // Handle Absolute values vs small deltas
+                                    if (entry.Price > 0 && entry.Price < 1000) 
+                                        _decimalDictionary[entry.TemplateId] = entry.Price;
+                                }
+
+                                // Size Handling
+                                if (values.Count > 2)
+                                {
+                                    long rawSize = Math.Abs(values[2]);
+                                    if (rawSize > 0) entry.Size = rawSize;
+                                }
+
+                                // Match Entry Type if possible
+                                if (values[0] == 0) entry.EntryType = "Bid";
+                                else if (values[0] == 1) entry.EntryType = "Offer";
+                                else if (values[0] == 2) entry.EntryType = "Trade";
+                            }
                         }
+                        break; // Stop after first valid symbol match in this packet
                     }
                 }
-
-                // Time Scrape
-                var timeMatch = Regex.Match(content, @"\d{8}-\d{2}:\d{2}:\d{2}");
-                if (timeMatch.Success) entry.SendingTime = ParseBseTime(timeMatch.Value);
-
-                if (entry.TemplateId == 64) {
-                    entry.MsgTypeCode = "0";
-                    entry.EntryType = "Admin";
-                }
-            } catch {}
+            } catch { }
         }
 
         private static int FindSubArray(byte[] source, byte[] target)
@@ -156,30 +175,8 @@ namespace BseDashboard.Decoder
             return -1;
         }
 
-        private static void ApplyFieldToEntry(MarketDataEntry entry, FastField field, object value)
-        {
-            if (value == null) return;
-            switch (field.Id)
-            {
-                case 35: entry.MsgTypeCode = value.ToString(); break;
-                case 52: entry.SendingTime = ParseBseTime(value.ToString()); break;
-                case 55: entry.Symbol = value.ToString(); break;
-            }
-        }
-
-        private static uint ReadPMap(byte[] data, ref int offset)
-        {
-            uint pMap = 0;
-            while (offset < data.Length)
-            {
-                byte b = data[offset++];
-                pMap = (pMap << 7) | (uint)(b & 0x7F);
-                if ((b & 0x80) != 0) break;
-            }
-            return pMap;
-        }
-
-        private static long ReadInteger(byte[] data, ref int offset)
+        // FAST Unsigned Integer (7-bit with stop bit)
+        private static long ReadUInt(byte[] data, ref int offset)
         {
             long value = 0;
             while (offset < data.Length)
@@ -191,49 +188,35 @@ namespace BseDashboard.Decoder
             return value;
         }
 
-        private static string ReadString(byte[] data, ref int offset)
+        // FAST Signed Integer (Two's complement logic for 7-bit streams)
+        private static long ReadInt(byte[] data, ref int offset)
         {
-            StringBuilder sb = new StringBuilder();
-            while (offset < data.Length)
+            if (offset >= data.Length) throw new IndexOutOfRangeException();
+            
+            byte b = data[offset++];
+            long value = (b & 0x40) != 0 ? -1 : 0; // Sign extend from 7th bit
+            value = (value << 7) | (byte)(b & 0x7F);
+            
+            if ((b & 0x80) == 0) // Multi-byte
             {
-                byte b = data[offset++];
-                char c = (char)(b & 0x7F);
-                if (c >= 32 && c <= 126) sb.Append(c);
-                if ((b & 0x80) != 0) break;
+                while (offset < data.Length)
+                {
+                    b = data[offset++];
+                    value = (value << 7) | (byte)(b & 0x7F);
+                    if ((b & 0x80) != 0) break;
+                }
             }
-            return sb.ToString();
+            return value;
         }
 
         private static DateTime ParseBseTime(string s)
         {
             try {
-                var match = Regex.Match(s, @"\d{8}-\d{2}:\d{2}:\d{2}");
-                if (match.Success) return DateTime.ParseExact(match.Value, "yyyyMMdd-HH:mm:ss", null);
-                return DateTime.Now;
-            } catch { return DateTime.Now; }
+                // Handle 20260202-07:47:41 format
+                if (DateTime.TryParseExact(s, "yyyyMMdd-HH:mm:ss", null, System.Globalization.DateTimeStyles.AssumeUniversal, out var dt))
+                    return dt;
+            } catch { }
+            return DateTime.Now;
         }
-    }
-
-    public enum FieldType { ASCII, UInt32, Int32, Decimal }
-    public enum FieldOperator { None, Constant, Copy, Tail, Delta }
-
-    public class FastField
-    {
-        public int Id { get; set; }
-        public string Name { get; set; }
-        public FieldType Type { get; set; }
-        public FieldOperator Operator { get; set; }
-        public FastField(int id, string name, FieldType type, FieldOperator op)
-        {
-            Id = id; Name = name; Type = type; Operator = op;
-        }
-    }
-
-    public class FastTemplate
-    {
-        public int Id { get; set; }
-        public string Name { get; set; }
-        public List<FastField> Fields { get; set; } = new();
-        public FastTemplate(int id, string name) { Id = id; Name = name; }
     }
 }

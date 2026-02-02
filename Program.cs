@@ -9,6 +9,7 @@ builder.Services.AddServerSideBlazor();
 // BSE Market Data Services
 builder.Services.AddSingleton<MarketDataService>();
 builder.Services.AddHostedService<UdpMulticastListener>();
+builder.Services.AddHostedService<LocalDataSimulator>();
 
 var app = builder.Build();
 

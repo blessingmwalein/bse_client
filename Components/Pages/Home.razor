@@ -72,7 +72,7 @@
                                     {
                                         if (msg == null) continue;
                                         <tr class="fade-in">
-                                            <td class="time">@msg.SendingTime.ToString("HH:mm:ss.fff")</td>
+                                            <td class="time">@(msg.SendingTime.ToString("HH:mm:ss.fff") ?? "-")</td>
                                             <td class="id">@msg.TemplateId</td>
                                             <td class="fix">@(msg.MsgTypeCode ?? "-")</td>
                                             <td class="symbol">@(msg.Symbol ?? "-")</td>
@@ -114,14 +114,15 @@
         <ErrorContent Context="ex">
             <div class="alert alert-danger m-4">
                 <h4>Dashboard Data Error</h4>
-                <p>An error occurred while rendering market data. This is usually caused by a malformed packet.</p>
+                <p>A rendering error occurred. Attempting to recover...</p>
                 <div class="mt-2">
-                    <code>@ex.Message</code>
+                    <small><code>@ex.Message</code></small>
                 </div>
-                <button class="btn btn-primary mt-3" @onclick="() => { /* Logic to clear buffers could go here */ }">Clear Feed</button>
+                <button class="btn btn-primary mt-3" @onclick="() => { DisplayMessages = Array.Empty<MarketDataEntry>(); StateHasChanged(); }">Clear & Restart UI</button>
             </div>
         </ErrorContent>
     </ErrorBoundary>
+
 
 </div>
 
@@ -308,16 +309,20 @@
     private DateTime? LastHeartbeat;
     private readonly object _lock = new();
     private System.Threading.Timer? _throttleTimer;
+    private bool _disposed = false;
 
     protected override void OnInitialized()
     {
         DataService.OnNewMessage += HandleNewMessage;
         
-        // Update UI at most every 250ms
+        // Update UI at most every 500ms to prevent browser overwhelm
         _throttleTimer = new System.Threading.Timer(_ => 
         {
-            InvokeAsync(StateHasChanged);
-        }, null, 250, 250);
+            if (!_disposed) 
+            {
+                InvokeAsync(StateHasChanged);
+            }
+        }, null, 500, 500);
     }
 
     private void HandleNewMessage(MarketDataEntry entry)
@@ -328,37 +333,47 @@
         {
             lock (_lock)
             {
-                _messageBuffer.Add(entry);
-                if (_messageBuffer.Count > 50) _messageBuffer.RemoveAt(0);
+                // Grouping: For MarketData, we only want the latest per symbol in a "Live" view
+                // But we still want a scrolling feed of everything.
                 
-                _logBuffer.Add(entry.RawHex);
-                if (_logBuffer.Count > 50) _logBuffer.RemoveAt(0);
+                _messageBuffer.Insert(0, entry);
+                if (_messageBuffer.Count > 100) _messageBuffer.RemoveAt(_messageBuffer.Count - 1);
+                
+                if (!string.IsNullOrEmpty(entry.RawHex))
+                {
+                    _logBuffer.Insert(0, entry.RawHex);
+                    if (_logBuffer.Count > 50) _logBuffer.RemoveAt(_logBuffer.Count - 1);
+                }
 
-                if (entry.MsgType?.Contains("Heartbeat") == true)
+                if (string.Equals(entry.MsgType, "Heartbeat", StringComparison.OrdinalIgnoreCase))
                 {
                     HeartbeatCount++;
                     LastHeartbeat = DateTime.Now;
                 }
-                
-                if (!string.IsNullOrEmpty(entry.Symbol))
+                else if (!string.IsNullOrEmpty(entry.Symbol) && entry.Symbol != "-")
                 {
                     TrackedSymbols.Add(entry.Symbol);
                 }
 
-                // Create reversed snapshots for the UI to use without further processing
-                DisplayMessages = _messageBuffer.AsEnumerable().Reverse().ToArray();
-                DisplayLogs = _logBuffer.AsEnumerable().Reverse().ToArray();
+                // Snapshots for the UI (Thread-safe copy)
+                DisplayMessages = _messageBuffer.ToArray();
+                DisplayLogs = _logBuffer.ToArray();
             }
         }
-        catch { /* Safe background skip */ }
+        catch (Exception ex) 
+        { 
+            Console.WriteLine($"[Dashboard Error] {ex.Message}");
+        }
     }
 
     public void Dispose()
     {
+        _disposed = true;
         DataService.OnNewMessage -= HandleNewMessage;
         _throttleTimer?.Dispose();
     }
 }
+
 
 
 

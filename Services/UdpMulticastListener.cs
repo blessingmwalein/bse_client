@@ -12,8 +12,41 @@ namespace BseDashboard.Services
 {
     public class MarketDataService
     {
+        private readonly string _logsDir = "Logs";
         public event Action<MarketDataEntry>? OnNewMessage;
-        public void Notify(MarketDataEntry message) => OnNewMessage?.Invoke(message);
+
+        public MarketDataService()
+        {
+            if (!Directory.Exists(_logsDir)) Directory.CreateDirectory(_logsDir);
+        }
+
+        public async Task Notify(MarketDataEntry entry)
+        {
+            try {
+                string today = DateTime.Now.ToString("yyyyMMdd");
+                string csvPath = Path.Combine(_logsDir, $"decoded_{today}.csv");
+                string rawLog = Path.Combine(_logsDir, $"raw_{today}.log");
+
+                // Write header if new file
+                if (!File.Exists(csvPath))
+                {
+                    await File.WriteAllTextAsync(csvPath, "Time,Symbol,Type,Price,Size,TemplateId,RawHex" + Environment.NewLine);
+                }
+
+                // Log Raw
+                string hexLog = $"[{DateTime.Now:HH:mm:ss}] {entry.RawHex}{Environment.NewLine}";
+                await File.AppendAllTextAsync(rawLog, hexLog);
+
+                // Log Decoded
+                if (entry.Symbol != "-")
+                {
+                    string csvEntry = $"{entry.SendingTime:HH:mm:ss.fff},{entry.Symbol},{entry.EntryType},{entry.Price},{entry.Size},{entry.TemplateId},{entry.RawHex}{Environment.NewLine}";
+                    await File.AppendAllTextAsync(csvPath, csvEntry);
+                }
+            } catch { /* Suppress logging errors */ }
+
+            OnNewMessage?.Invoke(entry);
+        }
     }
 
     public class UdpMulticastListener : BackgroundService
@@ -21,11 +54,12 @@ namespace BseDashboard.Services
         private readonly string _mcastGroup = "239.255.190.100";
         private readonly int _port = 30540;
         private readonly MarketDataService _dataService;
-        private readonly string _logPath = "raw_feed_log.txt";
+        private readonly string _logsDir = "Logs";
 
         public UdpMulticastListener(MarketDataService dataService)
         {
             _dataService = dataService;
+            if (!Directory.Exists(_logsDir)) Directory.CreateDirectory(_logsDir);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -43,14 +77,7 @@ namespace BseDashboard.Services
                 {
                     var result = await udp.ReceiveAsync(stoppingToken);
                     var entry = FastDecoder.Decode(result.Buffer);
-                    
-                    // Log raw hex for offline decoding work
-                    try {
-                        string hex = BitConverter.ToString(result.Buffer) + Environment.NewLine;
-                        await File.AppendAllTextAsync(_logPath, hex, stoppingToken);
-                    } catch { /* Suppress logging errors to keep feed live */ }
-
-                    _dataService.Notify(entry);
+                    await _dataService.Notify(entry);
                 }
             }
             catch (Exception ex)
